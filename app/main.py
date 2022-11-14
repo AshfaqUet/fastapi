@@ -1,11 +1,33 @@
+import time
 from email import message
 from typing import Optional
 from fastapi import FastAPI, Response, status, HTTPException
 from pydantic import BaseModel
 from random import randrange
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
+class Post(BaseModel):
+    title: str
+    content: str
+    published: bool = True
+
+while True:  # try to connect to db after some time untill successfully connected
+    try:
+        # Connect to an existing database
+        conn = psycopg2.connect(host='localhost', database='fastapi', user='postgres', password='admin123', cursor_factory=RealDictCursor)
+
+        # Open a cursor to perform database operations
+        cursor = conn.cursor()
+        print("Database connection is successfull")
+        break
+
+    except Exception as error:
+        print("Connection to database failed")
+        print("Error! ", error)
+        time.sleep(5)
 
 my_posts = [
     {
@@ -38,20 +60,17 @@ def root():
 
 @app.get("/posts")
 def get_post():
-    return {"data": my_posts}
+    cursor.execute("SELECT * from posts;")
+    posts = cursor.fetchall()
+    return {"data": posts}
 
-class Post(BaseModel):
-    title: str
-    content: str
-    published: bool = True
-    rating: Optional[int] = None
 
 @app.post("/posts", status_code=status.HTTP_201_CREATED)
 def create_post(post: Post):
-    post_dict = post.dict()
-    post_dict["id"] = randrange(3, 2000000)
-    my_posts.append(post_dict)
-    return {"data": post_dict}
+    cursor.execute("INSERT INTO posts (title, content, published) VALUES (%s, %s, %s) RETURNING *", (post.title, post.content, post.published))
+    new_post = cursor.fetchone()
+    conn.commit()
+    return {"data": new_post}
 
 @app.get("/posts/latest")
 def get_latest_post():
@@ -60,7 +79,8 @@ def get_latest_post():
 
 @app.get("/posts/{post_id}")
 def get_post(post_id: int, response: Response):
-    post = find_post(post_id)
+    cursor.execute("SELECT * FROM posts where id = %s", (str(post_id),))
+    post = cursor.fetchone()
     
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with id {post_id} not found")
@@ -69,21 +89,22 @@ def get_post(post_id: int, response: Response):
 
 @app.delete("/posts/{post_id}")
 def delete_post(post_id: int):
-    index = find_index_post(post_id)
-    if index:
-        my_posts.pop(index)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    
-    return Response(status_code=status.HTTP_400_BAD_REQUEST, detail=f"post with id {post_id} does not exist")
+    cursor.execute("DELETE FROM posts where id = %s returning *", (str(post_id),))
+    deleted_post = cursor.fetchone()
+    conn.commit()
+    if not delete_post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with id {post_id} not found")
 
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    
 @app.put("/posts/{post_id}")
 def update_post(post_id: int, post: Post):
-    index = find_index_post(post_id)
-    if index:
-        post_dict = post.dict()
-        post_dict["id"] = post_id
-        my_posts[index] = post_dict
-        return {"data": post_dict}
+    cursor.execute("UPDATE posts SET title = %s, content = %s, published = %s where id = %s RETURNING *", (post.title, post.content, post.published, str(post_id)))
+    updated_post = cursor.fetchone()
+    conn.commit()
+    if not update_post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with id {post_id} not found")
     
-    return Response(status_code=status.HTTP_400_BAD_REQUEST)
-
+    return {"data": updated_post}
+    

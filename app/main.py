@@ -1,10 +1,21 @@
 import time
 
 import psycopg2
-from fastapi import FastAPI, Response, status, HTTPException
+from fastapi import FastAPI, Response, status, HTTPException, Depends
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from app.database import engine, get_db_session
+from app.models import Base   # It must be import from model we cann't import it from database file
+
+
+# It shouldn't work because we didn't import the models so we have to import it in such a way that model's should be
+# imported between the declarative_base and create_all function
+# from app.database import Base
+# Base.metadata.create_all(bind=engine)
+
+Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 
@@ -115,3 +126,10 @@ def update_post(post_id: int, post: Post):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"post with id {post_id} not found")
 
     return {"data": updated_post}
+
+
+@app.get("/sqlalchemy/posts")
+def get_sqlalchemy_posts(db: Session = Depends(get_db_session)):
+    from app.models.posts import Post
+    post = db.query(Post).first()
+    return {"success": post.content}
